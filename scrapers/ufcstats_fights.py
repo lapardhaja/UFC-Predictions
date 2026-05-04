@@ -11,6 +11,33 @@ from scrapers.base_scraper import BaseScraper
 UFCSTATS_ROOT = "http://ufcstats.com"
 
 
+def _norm_stat_key(label: str) -> str:
+    s = label.lower().strip().replace(".", "").replace("/", "_")
+    s = re.sub(r"[^a-z0-9_]+", "_", s)
+    return re.sub(r"_+", "_", s).strip("_")
+
+
+def _parse_control_seconds(txt: str) -> int | None:
+    txt = txt.strip()
+    if not txt or txt == "--":
+        return None
+    if ":" in txt:
+        parts = [p.strip() for p in txt.split(":")]
+        try:
+            if len(parts) == 2:
+                return int(parts[0]) * 60 + int(parts[1])
+            if len(parts) == 3:
+                return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        except ValueError:
+            return None
+    if txt.replace(".", "", 1).isdigit():
+        try:
+            return int(float(txt))
+        except ValueError:
+            return None
+    return None
+
+
 class UFCStatsFightsScraper(BaseScraper):
     base_url = UFCSTATS_ROOT
 
@@ -106,15 +133,27 @@ class UFCStatsFightsScraper(BaseScraper):
                 {"fighter_slug": slug, "name": name, "is_winner": is_winner, "totals": totals}
             )
 
-        # Fallback: parse main totals table (UFCStats layout varies)
+        # Fallback / enrich: parse all UFCStats fight stat tables into per-fighter totals
+        table_fighters = UFCStatsFightsScraper._parse_all_stat_tables(soup)
         if len(out["fighters"]) < 2:
-            out["fighters"] = self._parse_totals_table(soup)
+            out["fighters"] = table_fighters
+        elif len(table_fighters) == 2:
+            UFCStatsFightsScraper._merge_totals(out["fighters"], table_fighters)
 
         return out
 
     @staticmethod
-    def _parse_totals_table(soup: BeautifulSoup) -> list[dict[str, Any]]:
-        """Parse classic 2-column fighter totals table."""
+    def _merge_totals(primary: list[dict[str, Any]], secondary: list[dict[str, Any]]) -> None:
+        """Merge scraped table totals into primary list matched by fighter_slug."""
+        by_slug = {x["fighter_slug"]: x.get("totals") or {} for x in secondary if x.get("fighter_slug")}
+        for f in primary:
+            slug = f.get("fighter_slug")
+            if slug and slug in by_slug:
+                f.setdefault("totals", {}).update(by_slug[slug])
+
+    @staticmethod
+    def _parse_all_stat_tables(soup: BeautifulSoup) -> list[dict[str, Any]]:
+        """Parse every b-fight-details__table on the page (totals, significant strikes, etc.)."""
         fighters: list[dict[str, Any]] = []
         header = soup.select_one("div.b-fight-details__persons")
         if not header:
@@ -130,28 +169,62 @@ class UFCStatsFightsScraper(BaseScraper):
                     "totals": {},
                 }
             )
-        table = soup.select_one("table.b-fight-details__table")
-        if not table or len(fighters) < 2:
+        if len(fighters) < 2:
             return fighters
-        body_rows = table.select("tbody tr")
-        for row in body_rows:
-            cells = row.find_all("td")
-            if len(cells) < 3:
+
+        for table in soup.select("table.b-fight-details__table"):
+            title_el = table.find_previous("p", class_=re.compile("b-fight-details__table-title"))
+            section = _norm_stat_key(title_el.get_text(strip=True)) if title_el else "table"
+            thead = table.select_one("thead")
+            if not thead:
                 continue
-            label = cells[0].get_text(strip=True)
-            if not label:
+            ths = [th.get_text(strip=True) for th in thead.select("th")]
+            if len(ths) < 3:
                 continue
-            key = label.lower().replace(" ", "_").replace(".", "")
-            for i, f in enumerate(fighters[:2]):
-                idx = i + 1
-                if idx < len(cells):
-                    txt = cells[idx].get_text(strip=True)
+            # Map column index -> fighter index (skip first col = stat name)
+            col_to_fidx: dict[int, int] = {}
+            for col_idx in range(1, min(len(ths), 3)):
+                h = ths[col_idx].lower()
+                if fighters[0]["name"].lower() in h or fighters[0]["fighter_slug"] in h:
+                    col_to_fidx[col_idx] = 0
+                elif fighters[1]["name"].lower() in h or fighters[1]["fighter_slug"] in h:
+                    col_to_fidx[col_idx] = 1
+                else:
+                    col_to_fidx[col_idx] = col_idx - 1
+
+            for row in table.select("tbody tr"):
+                cells = row.find_all("td")
+                if len(cells) < 3:
+                    continue
+                label = cells[0].get_text(strip=True)
+                if not label:
+                    continue
+                base_key = _norm_stat_key(label)
+                low = label.lower()
+                for col_idx in (1, 2):
+                    if col_idx >= len(cells):
+                        continue
+                    fidx = col_to_fidx.get(col_idx, col_idx - 1)
+                    if fidx not in (0, 1):
+                        continue
+                    txt = cells[col_idx].get_text(strip=True)
+                    pref = f"{section}__" if section != "table" else ""
+                    if "control" in low or "ctrl" in base_key:
+                        sec = _parse_control_seconds(txt)
+                        if sec is not None:
+                            fighters[fidx]["totals"][pref + "control_time_seconds"] = sec
+                            fighters[fidx]["totals"]["ctrl"] = sec
+                        continue
                     nums = re.findall(r"\d+", txt)
-                    if len(nums) >= 2 and ("landed" in label.lower() or "of" in txt):
-                        f["totals"][f"{key}_landed"] = int(nums[0])
-                        f["totals"][f"{key}_attempted"] = int(nums[1])
+                    if len(nums) >= 2 and ("of" in txt or "landed" in low or "/" in txt):
+                        fighters[fidx]["totals"][pref + f"{base_key}_landed"] = int(nums[0])
+                        fighters[fidx]["totals"][pref + f"{base_key}_attempted"] = int(nums[1])
                     elif len(nums) == 1:
-                        f["totals"][key] = int(nums[0])
+                        try:
+                            fighters[fidx]["totals"][pref + base_key] = int(nums[0])
+                        except ValueError:
+                            pass
+
         win_i = soup.select_one("i.b-fight-details__person-status_style_gray")
         if win_i:
             p = win_i.find_parent("div", class_=re.compile("person"))

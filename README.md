@@ -26,6 +26,12 @@ Set `VITE_API_BASE_URL` in `frontend/.env` if the API is not proxied (default Vi
 2. Train: `python -m ml.train` (writes `ml/models/production.pkl` and metadata).
 3. Predictions on `/api/v1/fights/{fight_id}` use the bundle when present; otherwise a small heuristic fallback.
 
+### Data fidelity & fighter age
+
+- **UFCStats:** Each fight page’s stat tables are merged into per-fighter `totals`; the full dict is stored in `fight_participations.stats_json` (audit + future features). Numeric columns are still populated for the current model. Control time strings like `4:32` are converted to seconds.
+- **Age at fight time (training):** Features use each fighter’s **DOB vs that bout’s event date** (not “age today”).
+- **Age for upcoming predictions:** Uses the **event date** when set; if the card has no date yet, uses **today** so ages stay current until UFCStats lists the date.
+
 ## Admin
 
 `POST /api/v1/admin/refresh-events` and `POST /api/v1/admin/retrain` require header `Authorization: Bearer <ADMIN_API_KEY>` (see `.env.example`).

@@ -9,7 +9,7 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ml.feature_builder import _career_stats_before, _recent_form, _streak, build_per_fighter_history, load_fighter_attrs, load_fights_dataframe
+from ml.age_util import age_years_on_date, reference_date_for_prediction
 
 
 def load_bundle(path: Path | None = None) -> dict[str, Any]:
@@ -22,7 +22,7 @@ def load_bundle(path: Path | None = None) -> dict[str, Any]:
 def fight_row_by_id(db: Session, fight_id: str) -> dict[str, Any] | None:
     q = text(
         """
-        SELECT f.id AS fight_db_id, f.fight_id, e.date AS fight_date, f.weight_class, f.is_title_fight,
+        SELECT f.id AS fight_db_id, f.fight_id, e.date AS fight_date, e.is_upcoming AS event_is_upcoming, f.weight_class, f.is_title_fight,
                f.winner_fighter_id, pa.fighter_id AS fa_id, pb.fighter_id AS fb_id,
                fa.fighter_id AS fa_slug, fb.fighter_id AS fb_slug,
                 fa.name AS fa_name, fb.name AS fb_name
@@ -68,11 +68,11 @@ def build_row_for_fight(db: Session, fight_id: str, *, flip: bool | None = None)
     a_w5, a_l5 = _recent_form(past_a, 5)
     b_w5, b_l5 = _recent_form(past_b, 5)
 
-    as_of_d = fd.date() if isinstance(fd, pd.Timestamp) else fd
+    as_of_d = reference_date_for_prediction(fr.get("fight_date"))
     ha = pk_to.get(fa, {})
     hb = pk_to.get(fb, {})
-    age_a = (as_of_d - ha["dob"]).days / 365.25 if ha.get("dob") else None
-    age_b = (as_of_d - hb["dob"]).days / 365.25 if hb.get("dob") else None
+    age_a = age_years_on_date(ha.get("dob"), as_of_d) if ha.get("dob") else None
+    age_b = age_years_on_date(hb.get("dob"), as_of_d) if hb.get("dob") else None
     h_a = float(ha.get("height_cm") or 0) or 0.0
     h_b = float(hb.get("height_cm") or 0) or 0.0
     r_a = float(ha.get("reach_cm") or 0) or 0.0

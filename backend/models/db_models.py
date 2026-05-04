@@ -80,6 +80,8 @@ class FightParticipation(Base):
     submission_attempts: Mapped[int | None] = mapped_column(Integer, nullable=True)
     knockdowns: Mapped[int | None] = mapped_column(Integer, nullable=True)
     control_time_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Full UFCStats scrape payload per fighter (all table rows / keys) for future features & audits
+    stats_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     fight: Mapped["Fight"] = relationship("Fight", back_populates="participations")
     fighter: Mapped["Fighter"] = relationship("Fighter", back_populates="participations")

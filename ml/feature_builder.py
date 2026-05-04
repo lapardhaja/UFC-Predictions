@@ -10,13 +10,7 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from backend.database import SessionLocal
-
-
-def _age_years(dob: date | None, as_of: date) -> float | None:
-    if dob is None:
-        return None
-    return (as_of - dob).days / 365.25
+from ml.age_util import age_years_on_date
 
 
 def _safe_div(a: float, b: float) -> float:
@@ -266,8 +260,8 @@ def build_feature_matrix(
 
             ha = pk_to.get(fa, {})
             hb = pk_to.get(fb, {})
-            age_a = _age_years(ha.get("dob"), as_of_d) if ha.get("dob") is not None else None
-            age_b = _age_years(hb.get("dob"), as_of_d) if hb.get("dob") is not None else None
+            age_a = age_years_on_date(ha.get("dob"), as_of_d) if ha.get("dob") is not None else None
+            age_b = age_years_on_date(hb.get("dob"), as_of_d) if hb.get("dob") is not None else None
             h_a = float(ha.get("height_cm") or 0) or 0.0
             h_b = float(hb.get("height_cm") or 0) or 0.0
             r_a = float(ha.get("reach_cm") or 0) or 0.0

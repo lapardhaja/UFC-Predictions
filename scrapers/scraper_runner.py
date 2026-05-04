@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date
 from typing import Any
@@ -27,7 +28,7 @@ def _get_or_create_fighter(db: Session, slug: str, name: str) -> Fighter:
     return row
 
 
-def _map_totals(totals: dict[str, Any]) -> dict[str, int | None]:
+def _map_totals(totals: dict[str, Any]) -> dict[str, Any]:
     def pick(*keys: str) -> int | None:
         for k in keys:
             if k in totals and totals[k] is not None:
@@ -37,13 +38,39 @@ def _map_totals(totals: dict[str, Any]) -> dict[str, int | None]:
                     continue
         return None
 
+    def parse_control(val: Any) -> int | None:
+        if val is None:
+            return None
+        if isinstance(val, int):
+            return val
+        s = str(val).strip()
+        if ":" in s:
+            parts = s.split(":")
+            try:
+                if len(parts) == 2:
+                    m, sec = int(parts[0]), int(parts[1])
+                    return m * 60 + sec
+                if len(parts) == 3:
+                    h, m, sec = int(parts[0]), int(parts[1]), int(parts[2])
+                    return h * 3600 + m * 60 + sec
+            except (ValueError, IndexError):
+                return None
+        if s.isdigit():
+            return int(s)
+        return None
+
     sig_l = pick("sig_str_landed", "significant_strikes_landed")
     sig_a = pick("sig_str_attempted", "significant_strikes_attempted")
     td_l = pick("td_landed", "takedowns_landed")
     td_a = pick("td_attempted", "takedowns_attempted")
     sub_a = pick("sub_att", "submission_attempts")
     kd = pick("kd", "knockdowns")
-    ctrl = pick("ctrl", "control_time_seconds")
+    raw_ctrl = None
+    for k in ("ctrl", "control_time", "control_time_seconds"):
+        if k in totals and totals[k] is not None:
+            raw_ctrl = totals[k]
+            break
+    ctrl = parse_control(raw_ctrl)
     tsl = pick("total_str_landed", "total_strikes_landed")
     tsa = pick("total_str_attempted", "total_strikes_attempted")
     return {
@@ -149,12 +176,23 @@ def ingest_event_page(db: Session, event_url: str, *, fetch_fights: bool = True)
 
         def participation(fighter: Fighter, is_a: bool) -> FightParticipation:
             d = by_slug.get(fighter.fighter_id, {})
-            stats = _map_totals(d.get("totals") or {})
+            raw_totals = d.get("totals") or {}
+            stats = _map_totals(raw_totals)
+            stats_json = json.dumps(raw_totals, ensure_ascii=False) if raw_totals else None
             return FightParticipation(
                 fight_id=fight.id,
                 fighter_id=fighter.id,
                 is_fighter_a=is_a,
-                **stats,
+                stats_json=stats_json,
+                sig_strikes_landed=stats["sig_strikes_landed"],
+                sig_strikes_attempted=stats["sig_strikes_attempted"],
+                total_strikes_landed=stats["total_strikes_landed"],
+                total_strikes_attempted=stats["total_strikes_attempted"],
+                takedowns_landed=stats["takedowns_landed"],
+                takedowns_attempted=stats["takedowns_attempted"],
+                submission_attempts=stats["submission_attempts"],
+                knockdowns=stats["knockdowns"],
+                control_time_seconds=stats["control_time_seconds"],
             )
 
         db.add(participation(fa, True))
