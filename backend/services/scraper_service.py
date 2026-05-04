@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -20,8 +21,22 @@ def trigger_incremental_scrape(db: Session, *, max_pages: int = 1, fetch: bool =
     return {"fights_ingested_estimate": n}
 
 
-def trigger_retrain() -> dict[str, Any]:
+def trigger_retrain(*, hyperparams_json: Path | None = None) -> dict[str, Any]:
+    import json
+    from pathlib import Path
+
     from ml import train as train_mod
 
-    meta = train_mod.train()
-    return {"status": "ok", "metrics": meta.metrics, "version": meta.version}
+    hp = None
+    if hyperparams_json is not None and Path(hyperparams_json).exists():
+        data = json.loads(Path(hyperparams_json).read_text(encoding="utf-8"))
+        hp = data.get("best_params")
+    meta = train_mod.train(hyperparams=hp)
+    return {
+        "status": "ok",
+        "metrics": meta.metrics,
+        "metrics_val": meta.metrics_val,
+        "metrics_test": meta.metrics_test,
+        "version": meta.version,
+        "used_tuned_hyperparams": hp is not None,
+    }

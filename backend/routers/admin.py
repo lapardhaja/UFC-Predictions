@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
@@ -26,5 +28,11 @@ def refresh_events(
 
 
 @router.post("/admin/retrain")
-def retrain(_: None = Depends(verify_admin)) -> dict:
-    return scraper_service.trigger_retrain()
+def retrain(
+    use_tuned_hyperparams: bool = False,
+    _: None = Depends(verify_admin),
+) -> dict:
+    hp_path = Path(__file__).resolve().parents[2] / "ml" / "models" / "best_hyperparams.json"
+    return scraper_service.trigger_retrain(
+        hyperparams_json=hp_path if use_tuned_hyperparams else None,
+    )

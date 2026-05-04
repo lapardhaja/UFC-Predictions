@@ -23,8 +23,20 @@ Set `VITE_API_BASE_URL` in `frontend/.env` if the API is not proxied (default Vi
 ## Data & model
 
 1. Ingest UFCStats events (network): use `scrapers.scraper_runner.ingest_event_page(db, "<event-url>")` from a Python shell or extend admin routes.
-2. Train: `python -m ml.train` (writes `ml/models/production.pkl` and metadata).
-3. Predictions on `/api/v1/fights/{fight_id}` use the bundle when present; otherwise a small heuristic fallback.
+2. **Splits (before deployment):** Training uses **time-based** train / validation / test — no random shuffle across fight dates. Defaults: validation = fights on/after `2022-01-01`, holdout test = on/after `2024-01-01` (configurable). Use `--auto-split` for chronological **70% / 15% / 15%** if cutoffs leave empty val/test.
+3. **Hyperparameters (Optuna):** Tune on the **validation** slice only (test stays untouched), then train the final calibrated model:
+
+   ```bash
+   python -m ml.hyperparameter_tune --trials 100   # writes ml/models/best_hyperparams.json
+   python -m ml.train --hyperparams-json ml/models/best_hyperparams.json
+   ```
+
+   Or with auto split: `python -m ml.hyperparameter_tune --auto-split --trials 80`
+
+   In production, `POST /api/v1/admin/retrain?use_tuned_hyperparams=true` applies `ml/models/best_hyperparams.json` when that file exists (run HPO in CI or a worker first).
+
+4. Train without HPO: `python -m ml.train` (same split defaults).
+5. Predictions on `/api/v1/fights/{fight_id}` use the bundle when present; otherwise a small heuristic fallback.
 
 ### Data fidelity & fighter age
 
